@@ -1,33 +1,42 @@
 import pandas as pd
-from ingest import df # Importing our cleaned dataframe from ingest.py
+import numpy as np
 
-def detect_anomalies(data_frame, threshold=1.5):
-    print("🧠 RUNNING STATISTICAL ANOMALY ENGINE...")
+def detect_rolling_anomalies(data_frame, window=7, threshold=2.5):
+    """
+    Computes rolling 7-day Z-scores grouped by Region and Category
+    to prevent false positives from seasonality.
+    """
+    print(f"🧠 Running Rolling {window}-Day Window Anomaly Engine (Threshold: +/-{threshold}σ)...")
     
-    # 1. Calculate Mean and Standard Deviation of Revenue
-    mean_rev = data_frame['Revenue'].mean()
-    std_rev = data_frame['Revenue'].std()
-    
-    print(f"📊 Mean Revenue: ${mean_rev:.2f}")
-    print(f"📉 Standard Deviation: ${std_rev:.2f}\n")
-    
-    # 2. Calculate Z-Score for every row
-    # (Value - Mean) / Standard Deviation
-    data_frame['Z_Score'] = (data_frame['Revenue'] - mean_rev) / std_rev
-    
-    # 3. Flag anomalies: True if Z-Score is beyond +threshold or -threshold
-    data_frame['Is_Anomaly'] = data_frame['Z_Score'].abs() > threshold
-    
-    return data_frame
+    df = data_frame.copy()
+    df['Date'] = pd.to_datetime(df['Date'])
+    df = df.sort_values(by=['Region', 'Category', 'Date']).reset_index(drop=True)
 
-# --- EXECUTION ---
+    # 1. Group by dimensional segments (Region + Category)
+    grouped = df.groupby(['Region', 'Category'])
+
+    # 2. Calculate Rolling Mean & Standard Deviation over previous 'window' days
+    df['Rolling_Mean'] = grouped['Revenue'].transform(lambda x: x.shift(1).rolling(window=window, min_periods=3).mean())
+    df['Rolling_Std'] = grouped['Revenue'].transform(lambda x: x.shift(1).rolling(window=window, min_periods=3).std())
+
+    # 3. Calculate Rolling Z-Score
+    # Avoid zero division with safe numpy division
+    std_safe = df['Rolling_Std'].replace(0, np.nan)
+    df['Z_Score'] = (df['Revenue'] - df['Rolling_Mean']) / std_safe
+    df['Z_Score'] = df['Z_Score'].fillna(0)
+
+    # 4. Flag anomalies: True if Z-Score exceeds threshold
+    df['Is_Anomaly'] = df['Z_Score'].abs() > threshold
+    
+    anomalies = df[df['Is_Anomaly'] == True]
+    print(f"🚨 Detection Complete: Flagged {len(anomalies)} true anomalies out of {len(df)} records.")
+    
+    return df
+
 if __name__ == "__main__":
-    results = detect_anomalies(df, threshold=1.5)
+    raw_df = pd.read_excel('sales_data.xlsx')
+    results = detect_rolling_anomalies(raw_df, window=7, threshold=2.5)
     
-    print("--- ANOMALY DETECTION RESULTS ---")
-    print(results[['Date', 'Region', 'Revenue', 'Z_Score', 'Is_Anomaly']])
-    
-    # Validation Check: Print flagged rows only
-    anomalies = results[results['Is_Anomaly'] == True]
-    print(f"\n🚨 TOTAL ANOMALIES FLAGGED: {len(anomalies)}")
-    print(anomalies[['Date', 'Region', 'Revenue', 'Z_Score']])
+    print("\n--- DETECTED PRODUCTION ANOMALIES ---")
+    flagged = results[results['Is_Anomaly'] == True][['Date', 'Region', 'Category', 'Revenue', 'Rolling_Mean', 'Z_Score']]
+    print(flagged)
