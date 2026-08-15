@@ -1,3 +1,4 @@
+import re
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -11,6 +12,38 @@ st.set_page_config(
     layout="wide"
 )
 
+# ----------------- STRICT VALIDATION HELPERS -----------------
+def validate_email(email_str: str) -> tuple[bool, str]:
+    if not email_str or not email_str.strip():
+        return False, "Email cannot be blank."
+    # Standard RFC-compliant Regex (requires @, domain, and min 2-letter TLD)
+    pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$"
+    if not re.match(pattern, email_str.strip()):
+        return False, "Invalid email format (e.g. user@company.com)."
+    return True, ""
+
+def validate_company(name_str: str) -> tuple[bool, str]:
+    cleaned = name_str.strip()
+    if len(cleaned) < 3:
+        return False, "Company name must be at least 3 characters long."
+    return True, ""
+
+def validate_password(pwd_str: str) -> tuple[bool, str]:
+    if len(pwd_str) < 8:
+        return False, "Password must be at least 8 characters long."
+    if not re.search(r"[A-Za-z]", pwd_str) or not re.search(r"[0-9]", pwd_str):
+        return False, "Password must contain both letters and numbers."
+    return True, ""
+
+def validate_dataframe(df_to_check: pd.DataFrame) -> tuple[bool, str]:
+    required_cols = {'Date', 'Region', 'Category', 'Revenue'}
+    if not required_cols.issubset(df_to_check.columns):
+        missing = required_cols - set(df_to_check.columns)
+        return False, f"Missing required columns: {', '.join(missing)}"
+    if df_to_check.empty:
+        return False, "Uploaded file contains no records."
+    return True, ""
+
 # ----------------- SESSION STATE MANAGEMENT -----------------
 if "authenticated" not in st.session_state:
     st.session_state.authenticated = False
@@ -23,7 +56,7 @@ if "active_tab" not in st.session_state:
 
 if "companies_db" not in st.session_state:
     st.session_state.companies_db = {
-        "admin@enterprise.com": {"password": "password123", "company": "Acme Global Corp"}
+        "admin@enterprise.com": {"password": "Password123", "company": "Acme Global Corp"}
     }
 
 # ----------------- VIEW 1: LANDING PAGE -----------------
@@ -35,7 +68,6 @@ def render_landing_page():
         "rolling-window baselines and automated root-cause isolation."
     )
     
-    # CTA Buttons
     cta_col1, cta_col2, _ = st.columns([1.2, 1.2, 3])
     with cta_col1:
         if st.button("🚀 Launch Instant Demo", use_container_width=True, type="primary"):
@@ -50,7 +82,6 @@ def render_landing_page():
 
     st.divider()
 
-    # Core Value Pillars using Native Native Clean Border Containers
     st.subheader("System Capabilities")
     c1, c2, c3 = st.columns(3)
     
@@ -90,35 +121,56 @@ def render_auth_page():
 
         with tab_login:
             st.write("")
-            email = st.text_input("Work Email", placeholder="admin@enterprise.com")
-            password = st.text_input("Password", type="password")
-            st.write("")
-            
-            if st.button("Sign In", use_container_width=True, type="primary"):
-                if email in st.session_state.companies_db and st.session_state.companies_db[email]["password"] == password:
-                    st.session_state.authenticated = True
-                    st.session_state.user_email = email
-                    st.session_state.company_name = st.session_state.companies_db[email]["company"]
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials. Use 'Launch Instant Demo' or check credentials.")
+            with st.form("login_form"):
+                email = st.text_input("Work Email", placeholder="admin@enterprise.com")
+                password = st.text_input("Password", type="password")
+                submit_login = st.form_submit_button("Sign In", use_container_width=True, type="primary")
+
+                if submit_login:
+                    email_ok, email_msg = validate_email(email)
+                    if not email_ok:
+                        st.error(f"⚠️ {email_msg}")
+                    elif email not in st.session_state.companies_db:
+                        st.error("⚠️ Workspace not found. Please register an organization first.")
+                    elif st.session_state.companies_db[email]["password"] != password:
+                        st.error("⚠️ Incorrect password.")
+                    else:
+                        st.session_state.authenticated = True
+                        st.session_state.user_email = email
+                        st.session_state.company_name = st.session_state.companies_db[email]["company"]
+                        st.rerun()
 
         with tab_register:
             st.write("")
-            company = st.text_input("Organization Name", placeholder="e.g. Acme Corp")
-            admin_email = st.text_input("Admin Email", placeholder="admin@domain.com")
-            new_pass = st.text_input("Create Password", type="password")
-            st.write("")
-            
-            if st.button("Create Organization Workspace", use_container_width=True, type="primary"):
-                if company and admin_email and new_pass:
-                    st.session_state.companies_db[admin_email] = {"password": new_pass, "company": company}
-                    st.session_state.authenticated = True
-                    st.session_state.user_email = admin_email
-                    st.session_state.company_name = company
-                    st.rerun()
-                else:
-                    st.warning("Please complete all required fields.")
+            with st.form("register_form"):
+                company = st.text_input("Organization Name", placeholder="e.g. Acme Corp (Min 3 chars)")
+                admin_email = st.text_input("Admin Work Email", placeholder="admin@domain.com")
+                new_pass = st.text_input("Create Password", type="password", help="Min 8 chars with letters & numbers")
+                submit_reg = st.form_submit_button("Create Organization Workspace", use_container_width=True, type="primary")
+
+                if submit_reg:
+                    comp_ok, comp_msg = validate_company(company)
+                    email_ok, email_msg = validate_email(admin_email)
+                    pwd_ok, pwd_msg = validate_password(new_pass)
+
+                    if not comp_ok:
+                        st.error(f"⚠️ {comp_msg}")
+                    elif not email_ok:
+                        st.error(f"⚠️ {email_msg}")
+                    elif not pwd_ok:
+                        st.error(f"⚠️ {pwd_msg}")
+                    elif admin_email in st.session_state.companies_db:
+                        st.error("⚠️ An organization is already registered under this email.")
+                    else:
+                        st.session_state.companies_db[admin_email] = {
+                            "password": new_pass, 
+                            "company": company.strip()
+                        }
+                        st.session_state.authenticated = True
+                        st.session_state.user_email = admin_email
+                        st.session_state.company_name = company.strip()
+                        st.success("Workspace created successfully!")
+                        st.rerun()
 
         st.write("")
         if st.button("← Back to Overview", use_container_width=True):
@@ -136,6 +188,8 @@ def render_dashboard():
         st.write("")
         if st.button("🚪 Log Out", use_container_width=True):
             st.session_state.authenticated = False
+            st.session_state.company_name = ""
+            st.session_state.user_email = ""
             st.session_state.active_tab = "Home"
             st.rerun()
 
@@ -151,7 +205,15 @@ def render_dashboard():
     uploaded_file = st.sidebar.file_uploader("Upload Metric Dataset (.xlsx)", type=['xlsx'])
 
     if uploaded_file is not None:
-        df = pd.read_excel(uploaded_file)
+        try:
+            df = pd.read_excel(uploaded_file)
+            is_valid, err_msg = validate_dataframe(df)
+            if not is_valid:
+                st.sidebar.error(f"Invalid Data: {err_msg}")
+                return
+        except Exception as e:
+            st.sidebar.error(f"Failed to read file: {e}")
+            return
     else:
         df = pd.read_excel('sales_data.xlsx')
 
