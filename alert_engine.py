@@ -7,8 +7,8 @@ from ingest import df
 # 1. NEW: Real Email Sending Function
 def send_real_email(subject, body, to_email):
     # Sender Configuration (Use your real Gmail address and App Password)
-    sender_email = "aadityashirole@gmail.com"
-    app_password = "sbzo izma uqin zohs"  # Generated via Google Account -> Security -> App Passwords
+    sender_email = "your_email@gmail.com"
+    app_password = "YOUR_APP_PASSWORD_HERE"  # Generated via Google Account -> Security -> App Passwords
     
     msg = MIMEText(body)
     msg['Subject'] = subject
@@ -77,7 +77,7 @@ Automated Metric Monitoring Agent (Python / Pandas Engine)
         
         # 3. CALL REAL EMAIL FUNCTION HERE
         # Replace 'executive_team@company.com' with your destination email address
-        send_real_email(subject_line, email_content, "aadityashirole@gmail.com")
+        send_real_email(subject_line, email_content, "destination_email@example.com")
 
 # --- EXECUTION ---
 if __name__ == "__main__":

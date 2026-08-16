@@ -4,6 +4,7 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from anomaly_engine import detect_rolling_anomalies
+from alert_engine import send_real_email
 
 # ----------------- PAGE CONFIGURATION -----------------
 st.set_page_config(
@@ -205,7 +206,7 @@ def render_dashboard():
     st.sidebar.subheader("📂 Ingestion Target")
     uploaded_file = st.sidebar.file_uploader("Upload Metric Dataset (.xlsx)", type=['xlsx'])
 
-    # Determine Data Source
+    # Data Source Handling
     df = None
     if uploaded_file is not None:
         try:
@@ -220,7 +221,7 @@ def render_dashboard():
     elif st.session_state.use_sample_data:
         df = pd.read_excel('sales_data.xlsx')
 
-    # EMPTY WORKSPACE STATE (If no data uploaded yet)
+    # EMPTY WORKSPACE STATE
     if df is None:
         st.info("👋 **Welcome to your new workspace!** Your data pipeline is currently idle.")
         with st.container(border=True):
@@ -236,11 +237,11 @@ def render_dashboard():
                 st.rerun()
         return
 
-    # DATA INGESTED: RUN ENGINE & RENDER DASHBOARD
+    # DATA PROCESSING
     df_analyzed = detect_rolling_anomalies(df, window=window_size, threshold=threshold)
     anomalies = df_analyzed[df_analyzed['Is_Anomaly'] == True]
 
-    # KPI Cards
+    # KPI Row
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("Ingested Records", f"{len(df_analyzed):,}")
     kpi2.metric("Total Tracked Volume", f"${df_analyzed['Revenue'].sum():,.2f}")
@@ -253,9 +254,8 @@ def render_dashboard():
 
     st.divider()
 
-    # Interactive Trajectory Graph
+    # Time Series Trajectory
     st.subheader("Operational Metric Trajectory")
-    
     selected_region = st.selectbox("Select Operational Region", options=sorted(df_analyzed['Region'].unique()))
     filtered_df = df_analyzed[df_analyzed['Region'] == selected_region]
 
@@ -283,13 +283,13 @@ def render_dashboard():
         margin=dict(l=0, r=0, t=30, b=0),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
     )
-
     st.plotly_chart(fig, use_container_width=True)
 
-    # Incident Diagnostic Matrix
-    st.subheader("Incident Diagnostic Breakdown")
+    # Root Cause & Incident Diagnostics
+    st.subheader("🚨 Incident Diagnostics & Root-Cause Matrix")
     
     if not anomalies.empty:
+        # Table of flagged anomalies
         st.dataframe(
             anomalies[['Date', 'Region', 'Category', 'Revenue', 'Rolling_Mean', 'Z_Score']].style.format({
                 'Revenue': '${:,.2f}',
@@ -298,6 +298,40 @@ def render_dashboard():
             }),
             use_container_width=True
         )
+
+        # Export and Alert Action Row
+        act_col1, act_col2 = st.columns([1, 2])
+        
+        with act_col1:
+            csv_data = anomalies.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Export Diagnostic CSV",
+                data=csv_data,
+                file_name="metricguard_incidents.csv",
+                mime="text/csv",
+                use_container_width=True
+            )
+            
+        with act_col2:
+            target_email = st.text_input("Dispatch Executive Report To:", value=st.session_state.user_email)
+            if st.button("📤 Dispatch Automated SMTP Incident Digest", use_container_width=True, type="primary"):
+                with st.spinner("Generating diagnostic summary and dispatching SMTP payload..."):
+                    # Build summary digest
+                    top_incident = anomalies.iloc[0]
+                    body = (
+                        f"MetricGuard Automated Executive Digest\n\n"
+                        f"Organization: {st.session_state.company_name}\n"
+                        f"Total Incidents Detected: {len(anomalies)}\n"
+                        f"Primary Incident: {top_incident['Category']} in {top_incident['Region']} region on {str(top_incident['Date'])[:10]}.\n"
+                        f"Recorded Revenue: ${top_incident['Revenue']:,.2f} vs 7-Day Baseline: ${top_incident['Rolling_Mean']:,.2f} ({top_incident['Z_Score']:+.2f}σ).\n\n"
+                        f"Please review system operational pipelines."
+                    )
+                    send_real_email(
+                        f"🚨 MetricGuard Alert: {len(anomalies)} Critical Incidents [{st.session_state.company_name}]",
+                        body,
+                        target_email
+                    )
+                    st.success(f"Incident report successfully dispatched to `{target_email}`!")
     else:
         st.success("All metrics operating within normal baseline limits.")
 
