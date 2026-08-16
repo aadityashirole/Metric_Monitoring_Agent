@@ -16,7 +16,6 @@ st.set_page_config(
 def validate_email(email_str: str) -> tuple[bool, str]:
     if not email_str or not email_str.strip():
         return False, "Email cannot be blank."
-    # Standard RFC-compliant Regex (requires @, domain, and min 2-letter TLD)
     pattern = r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z]{2,}$"
     if not re.match(pattern, email_str.strip()):
         return False, "Invalid email format (e.g. user@company.com)."
@@ -53,6 +52,10 @@ if "user_email" not in st.session_state:
     st.session_state.user_email = ""
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = "Home"
+if "is_demo" not in st.session_state:
+    st.session_state.is_demo = False
+if "use_sample_data" not in st.session_state:
+    st.session_state.use_sample_data = False
 
 if "companies_db" not in st.session_state:
     st.session_state.companies_db = {
@@ -72,8 +75,10 @@ def render_landing_page():
     with cta_col1:
         if st.button("🚀 Launch Instant Demo", use_container_width=True, type="primary"):
             st.session_state.authenticated = True
-            st.session_state.company_name = "Global Logistics Inc."
+            st.session_state.company_name = "Global Logistics Demo Corp"
             st.session_state.user_email = "demo@enterprise.com"
+            st.session_state.is_demo = True
+            st.session_state.use_sample_data = True
             st.rerun()
     with cta_col2:
         if st.button("Client Sign In", use_container_width=True):
@@ -88,26 +93,17 @@ def render_landing_page():
     with c1:
         with st.container(border=True):
             st.subheader("Adaptive Seasonality")
-            st.write(
-                "Applies moving 7-day rolling window Z-scores to filter out expected weekly cyclical "
-                "dips without triggering false alarms."
-            )
+            st.write("Applies moving 7-day rolling window Z-scores to filter out expected weekly cyclical dips without false alarms.")
         
     with c2:
         with st.container(border=True):
             st.subheader("Root-Cause Isolation")
-            st.write(
-                "Hierarchically dissects high-variance days across regional and category segments to "
-                "quantify baseline impact percentages."
-            )
+            st.write("Hierarchically dissects high-variance days across regional and category segments to quantify baseline impact percentages.")
         
     with c3:
         with st.container(border=True):
             st.subheader("Zero-Noise Alerts")
-            st.write(
-                "Conditional guard clauses ensure executive incident summaries are dispatched via "
-                "SMTP only when actionable anomalies occur."
-            )
+            st.write("Conditional guard clauses ensure executive incident summaries are dispatched via SMTP only when actionable anomalies occur.")
 
 # ----------------- VIEW 2: AUTHENTICATION PORTAL -----------------
 def render_auth_page():
@@ -138,6 +134,8 @@ def render_auth_page():
                         st.session_state.authenticated = True
                         st.session_state.user_email = email
                         st.session_state.company_name = st.session_state.companies_db[email]["company"]
+                        st.session_state.is_demo = False
+                        st.session_state.use_sample_data = False
                         st.rerun()
 
         with tab_register:
@@ -169,7 +167,8 @@ def render_auth_page():
                         st.session_state.authenticated = True
                         st.session_state.user_email = admin_email
                         st.session_state.company_name = company.strip()
-                        st.success("Workspace created successfully!")
+                        st.session_state.is_demo = False
+                        st.session_state.use_sample_data = False
                         st.rerun()
 
         st.write("")
@@ -183,7 +182,7 @@ def render_dashboard():
     h1, h2 = st.columns([3, 1])
     with h1:
         st.title(f"🏢 {st.session_state.company_name}")
-        st.caption(f"Operator: `{st.session_state.user_email}` | Baseline Engine: **Rolling 7-Day Window**")
+        st.caption(f"Operator: `{st.session_state.user_email}` | Engine: **Adaptive Rolling 7-Day Z-Score**")
     with h2:
         st.write("")
         if st.button("🚪 Log Out", use_container_width=True):
@@ -191,6 +190,8 @@ def render_dashboard():
             st.session_state.company_name = ""
             st.session_state.user_email = ""
             st.session_state.active_tab = "Home"
+            st.session_state.is_demo = False
+            st.session_state.use_sample_data = False
             st.rerun()
 
     st.divider()
@@ -204,24 +205,42 @@ def render_dashboard():
     st.sidebar.subheader("📂 Ingestion Target")
     uploaded_file = st.sidebar.file_uploader("Upload Metric Dataset (.xlsx)", type=['xlsx'])
 
+    # Determine Data Source
+    df = None
     if uploaded_file is not None:
         try:
-            df = pd.read_excel(uploaded_file)
-            is_valid, err_msg = validate_dataframe(df)
-            if not is_valid:
-                st.sidebar.error(f"Invalid Data: {err_msg}")
-                return
+            temp_df = pd.read_excel(uploaded_file)
+            is_valid, err_msg = validate_dataframe(temp_df)
+            if is_valid:
+                df = temp_df
+            else:
+                st.sidebar.error(f"Schema Error: {err_msg}")
         except Exception as e:
-            st.sidebar.error(f"Failed to read file: {e}")
-            return
-    else:
+            st.sidebar.error(f"Error reading file: {e}")
+    elif st.session_state.use_sample_data:
         df = pd.read_excel('sales_data.xlsx')
 
-    # Run Anomaly Processing
+    # EMPTY WORKSPACE STATE (If no data uploaded yet)
+    if df is None:
+        st.info("👋 **Welcome to your new workspace!** Your data pipeline is currently idle.")
+        with st.container(border=True):
+            st.subheader("📥 Ingest Telemetry Data to Begin")
+            st.markdown(
+                "Upload your organization's time-series Excel file (`.xlsx`) via the sidebar or load "
+                "our enterprise benchmark dataset to test the detection engine."
+            )
+            st.caption("Required columns: `Date` (YYYY-MM-DD), `Region`, `Category`, `Revenue`")
+            st.write("")
+            if st.button("📊 Load Sample Benchmark Dataset", type="primary"):
+                st.session_state.use_sample_data = True
+                st.rerun()
+        return
+
+    # DATA INGESTED: RUN ENGINE & RENDER DASHBOARD
     df_analyzed = detect_rolling_anomalies(df, window=window_size, threshold=threshold)
     anomalies = df_analyzed[df_analyzed['Is_Anomaly'] == True]
 
-    # Clean KPI Cards
+    # KPI Cards
     kpi1, kpi2, kpi3 = st.columns(3)
     kpi1.metric("Ingested Records", f"{len(df_analyzed):,}")
     kpi2.metric("Total Tracked Volume", f"${df_analyzed['Revenue'].sum():,.2f}")
